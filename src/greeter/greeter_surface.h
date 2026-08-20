@@ -215,7 +215,12 @@ private:
   Button* m_shutdownButton = nullptr;
   Button* m_rebootButton = nullptr;
   Button* m_firmwareButton = nullptr;
+  Button* m_suspendButton = nullptr;
+  // Extra buttons from [[session.actions]] rows with action = "command", in config order.
+  std::vector<std::pair<Button*, std::string>> m_customPowerButtons; // button, shell command
   bool m_canRebootToFirmware = false;
+  // Right-to-left placement order: shutdown, reboot, firmware, suspend, then custom actions.
+  [[nodiscard]] std::vector<Button*> powerButtonsRightToLeft() const;
 
   bool m_allowEmptyPassword = false;
 

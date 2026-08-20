@@ -554,6 +554,18 @@ void GreeterSurface::initialize(RenderContext* context) {
         makePowerButton("cpu", ColorRole::Secondary, ColorRole::OnSecondary, []() { power::rebootToFirmwareSetup(); });
     m_firmwareButton->setTooltip("Restart to UEFI firmware setup");
   }
+  if (power::hasSuspendCommand()) {
+    m_suspendButton = makePowerButton("moon", ColorRole::Secondary, ColorRole::OnSecondary, []() { power::suspend(); });
+    m_suspendButton->setTooltip("Sleep");
+  }
+  for (const power::CustomAction& action : power::customActions()) {
+    Button* btn = makePowerButton(
+        action.glyph, ColorRole::Secondary, ColorRole::OnSecondary,
+        [command = action.command]() { power::runCommand(command); }
+    );
+    btn->setTooltip(action.label);
+    m_customPowerButtons.emplace_back(btn, action.command);
+  }
 
   const auto applySyncedPowerButton = [](Button* button, std::string_view action, std::string_view fallbackTooltip) {
     if (button == nullptr) {
@@ -571,13 +583,12 @@ void GreeterSurface::initialize(RenderContext* context) {
   };
   applySyncedPowerButton(m_shutdownButton, "shutdown", "Shut down");
   applySyncedPowerButton(m_rebootButton, "reboot", "Restart");
+  applySyncedPowerButton(m_suspendButton, "suspend", "Sleep");
 
   m_root.setAnimationManager(&m_animations);
   // Keep state changes immediate to avoid hover flicker.
-  for (Button* btn : {m_shutdownButton, m_rebootButton, m_firmwareButton}) {
-    if (btn != nullptr) {
-      btn->setAnimationManager(nullptr);
-    }
+  for (Button* btn : powerButtonsRightToLeft()) {
+    btn->setAnimationManager(nullptr);
   }
   m_inputDispatcher.setSceneRoot(&m_root);
   m_inputDispatcher.setCursorShapeCallback([](std::uint32_t serial, std::uint32_t shape) {
@@ -2196,6 +2207,15 @@ void GreeterSurface::rebuildFocusRing() {
     m_focusRing.push_back({m_schemeSelectArea, [this]() { toggleSchemeMenu(); }});
   }
 
+  // Power buttons join the ring left-to-right (custom actions, suspend, firmware, reboot, shutdown).
+  for (auto it = m_customPowerButtons.rbegin(); it != m_customPowerButtons.rend(); ++it) {
+    if (it->first != nullptr && it->first->inputArea() != nullptr && it->first->visible()) {
+      m_focusRing.push_back({it->first->inputArea(), [command = it->second]() { power::runCommand(command); }});
+    }
+  }
+  if (m_suspendButton != nullptr && m_suspendButton->inputArea() != nullptr && m_suspendButton->visible()) {
+    m_focusRing.push_back({m_suspendButton->inputArea(), []() { power::suspend(); }});
+  }
   if (m_firmwareButton != nullptr && m_firmwareButton->inputArea() != nullptr && m_firmwareButton->visible()) {
     m_focusRing.push_back({m_firmwareButton->inputArea(), []() { power::rebootToFirmwareSetup(); }});
   }
@@ -2522,10 +2542,8 @@ void GreeterSurface::layoutPowerButtons(float ox, float oy, float sw, float sh) 
 
   // Handle hidden position
   if (m_powerButtonsPosition == "hidden") {
-    m_shutdownButton->setVisible(false);
-    m_rebootButton->setVisible(false);
-    if (m_firmwareButton != nullptr) {
-      m_firmwareButton->setVisible(false);
+    for (Button* btn : powerButtonsRightToLeft()) {
+      btn->setVisible(false);
     }
     return;
   }
@@ -2565,28 +2583,47 @@ void GreeterSurface::layoutPowerButtons(float ox, float oy, float sw, float sh) 
     }
   };
 
+  const std::vector<Button*> rightToLeft = powerButtonsRightToLeft();
   // Determine horizontal placement: right-aligned (default) or left-aligned
   if (m_powerButtonsPosition == "bottom-left" || m_powerButtonsPosition == "top-left") {
-    // Left-aligned: firmware → reboot → shutdown (left to right)
+    // Left-aligned: custom actions → suspend → firmware → reboot → shutdown (left to right)
     float x = ox + margin;
-    if (m_firmwareButton != nullptr) {
-      place(m_firmwareButton, x);
-      x += size + gap;
+    bool first = true;
+    for (auto it = rightToLeft.rbegin(); it != rightToLeft.rend(); ++it) {
+      if (!first) {
+        x += size + gap;
+      }
+      first = false;
+      place(*it, x);
     }
-    place(m_rebootButton, x);
-    x += size + gap;
-    place(m_shutdownButton, x);
   } else {
-    // Right-aligned (default): shutdown → reboot → firmware (right to left)
+    // Right-aligned (default): shutdown → reboot → firmware → suspend → custom actions (right to left)
     float x = ox + sw - size - margin;
-    place(m_shutdownButton, x);
-    x -= size + gap;
-    place(m_rebootButton, x);
-    if (m_firmwareButton != nullptr) {
-      x -= size + gap;
-      place(m_firmwareButton, x);
+    bool first = true;
+    for (Button* btn : rightToLeft) {
+      if (!first) {
+        x -= size + gap;
+      }
+      first = false;
+      place(btn, x);
     }
   }
+}
+
+std::vector<Button*> GreeterSurface::powerButtonsRightToLeft() const {
+  std::vector<Button*> out;
+  for (Button* btn : {m_shutdownButton, m_rebootButton, m_firmwareButton, m_suspendButton}) {
+    if (btn != nullptr) {
+      out.push_back(btn);
+    }
+  }
+  for (const auto& [btn, command] : m_customPowerButtons) {
+    (void)command;
+    if (btn != nullptr) {
+      out.push_back(btn);
+    }
+  }
+  return out;
 }
 
 void GreeterSurface::setFocusIndex(std::ptrdiff_t index) {
