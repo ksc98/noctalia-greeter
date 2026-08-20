@@ -254,6 +254,63 @@ namespace power {
     );
   }
 
+  bool suspend() {
+    return runSyncedOrFallback(
+        "suspend",
+        {
+            {"systemctl", "suspend"},
+            {"loginctl", "suspend"},
+        }
+    );
+  }
+
+  bool runCommand(std::string_view command) {
+    if (runShellCommand(command)) {
+      kLog.info("command action accepted: {}", command);
+      return true;
+    }
+    kLog.warn("command action failed: {}", command);
+    return false;
+  }
+
+  bool hasSuspendCommand() {
+    const GreeterSyncedSession* session = syncedSession();
+    if (session == nullptr) {
+      return false;
+    }
+    if (session->power.suspend.has_value()) {
+      return true;
+    }
+    // Noctalia Shell's default panel ships "lock_and_suspend"; at the login screen there is
+    // nothing to lock, so treat it as suspend.
+    return std::ranges::any_of(session->actions, [](const GreeterSyncedSessionAction& row) {
+      return row.action == "suspend" || row.action == "lock_and_suspend";
+    });
+  }
+
+  std::vector<CustomAction> customActions() {
+    std::vector<CustomAction> out;
+    const GreeterSyncedSession* session = syncedSession();
+    if (session == nullptr) {
+      return out;
+    }
+    for (const GreeterSyncedSessionAction& row : session->actions) {
+      if (row.action != "command") {
+        continue;
+      }
+      if (!row.command.has_value() || row.command->empty()) {
+        kLog.warn("command action without a command; skipping");
+        continue;
+      }
+      out.push_back({
+          *row.command,
+          row.label.value_or(*row.command),
+          row.glyph.value_or("terminal-2"),
+      });
+    }
+    return out;
+  }
+
   bool rebootToFirmwareSetup() {
     return runFirstAvailable(
         "reboot-to-firmware",
